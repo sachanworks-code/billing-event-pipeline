@@ -1,0 +1,14 @@
+{
+  "events": 100,
+  "concurrency": 8,
+  "accepted": 100,
+  "fully_processed": 100,
+  "acceptance_seconds": 0.355,
+  "acceptance_requests_per_second": 281.56,
+  "acceptance_latency_p50_ms": 10.19,
+  "acceptance_latency_p95_ms": 212.55,
+  "total_seconds_including_completion_polling": 4.992,
+  "submission_errors": [],
+  "lookup_errors": [],
+  "pending_after_timeout": 0
+}

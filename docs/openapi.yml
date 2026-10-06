@@ -1,0 +1,70 @@
+openapi: 3.0.3
+info:
+  title: Billing Event Pipeline
+  version: 1.0.0
+  description: Synthetic billing event ingestion with asynchronous persistence and audit delivery.
+servers:
+  - url: http://localhost:8080
+paths:
+  /api/v1/billing-events:
+    post:
+      summary: Accept a validated event into Kafka
+      description: Acknowledgement does not imply persistence. Retry ambiguous failures with the same ID and payload.
+      operationId: submitBillingEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BillingEvent'}
+      responses:
+        '202':
+          description: Kafka acknowledged the event
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eventId, status]
+                properties:
+                  eventId: {type: string, format: uuid}
+                  status: {type: string, enum: [ACCEPTED]}
+        '400': {description: Invalid JSON or event contract}
+        '503': {description: Broker acknowledgement unavailable; delivery may be ambiguous}
+  /api/v1/billing-events/{eventId}:
+    get:
+      summary: Look up a persisted event and its audit publication status
+      operationId: getBillingEvent
+      parameters:
+        - in: path
+          name: eventId
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Event persisted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [event, status, auditStatus]
+                properties:
+                  event: {$ref: '#/components/schemas/BillingEvent'}
+                  status: {type: string, enum: [PERSISTED]}
+                  auditStatus: {type: string, enum: [PENDING, PUBLISHED]}
+        '400': {description: Invalid UUID}
+        '404': {description: Event not persisted; may still be processing or may have failed}
+components:
+  schemas:
+    BillingEvent:
+      type: object
+      additionalProperties: false
+      required: [eventId, invoiceId, customerId, amount, currency, billingDate]
+      properties:
+        eventId: {type: string, format: uuid}
+        invoiceId: {type: string, minLength: 1, maxLength: 64, example: INV-DEMO-1001}
+        customerId: {type: string, minLength: 1, maxLength: 64, example: CUSTOMER-DEMO-01}
+        amount: {type: number, minimum: 0.01, maximum: 999999999999.99, multipleOf: 0.01, example: 1499.00}
+        currency: {type: string, pattern: '^[A-Z]{3}$', example: INR}
+        billingDate: {type: string, format: date, example: '2026-10-01'}

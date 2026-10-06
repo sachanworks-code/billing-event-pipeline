@@ -1,0 +1,54 @@
+spring:
+  application:
+    name: billing-event-pipeline
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/billing}
+    username: ${DB_USER:billing}
+    password: ${DB_PASSWORD:billing_local_only}
+    hikari:
+      maximum-pool-size: 10
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    admin:
+      fail-fast: true
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
+        max.block.ms: 5000
+    listener:
+      ack-mode: record
+billing:
+  topics:
+    input: billing.events.v1
+    audit: billing.audit.v1
+    dlq: billing.events.v1.dlq
+  retry:
+    delay-ms: 1000
+    max-retries: 2
+  outbox:
+    enabled: true
+    poll-ms: 1000
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: never
+server:
+  error:
+    include-message: always

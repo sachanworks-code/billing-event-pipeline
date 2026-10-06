@@ -1,0 +1,8 @@
+{
+  "eventId": "54ea3148-3f35-43e8-a003-668e934cac01",
+  "invoiceId": "INV-DEMO-1001",
+  "customerId": "CUSTOMER-DEMO-01",
+  "amount": 1499.00,
+  "currency": "INR",
+  "billingDate": "2026-10-01"
+}
