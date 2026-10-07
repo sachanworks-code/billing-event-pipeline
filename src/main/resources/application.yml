@@ -38,6 +38,7 @@ billing:
   retry:
     delay-ms: 1000
     max-retries: 2
+  api-key: ${BILLING_API_KEY:billing-local-dev-key}
   outbox:
     enabled: true
     poll-ms: 1000

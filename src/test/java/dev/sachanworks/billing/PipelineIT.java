@@ -9,6 +9,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.TransientDataAccessResourceException;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -42,6 +45,7 @@ class PipelineIT {
         r.add("spring.datasource.username", mysql::getUsername);
         r.add("spring.datasource.password", mysql::getPassword);
         r.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+        r.add("billing.api-key", () -> "test-api-key");
     }
     @Autowired TestRestTemplate http;
     @Autowired JdbcTemplate jdbc;
@@ -81,6 +85,11 @@ class PipelineIT {
         });
         return found;
     }
+    HttpHeaders apiHeaders() {
+        var headers = new HttpHeaders();
+        headers.set("X-API-Key", "test-api-key");
+        return headers;
+    }
     void adminSql(String sql) {
         try (var connection = java.sql.DriverManager.getConnection(mysql.getJdbcUrl(), "root", mysql.getPassword());
              var statement = connection.createStatement()) {
@@ -90,7 +99,7 @@ class PipelineIT {
     @Test void httpToKafkaToMysqlToAuditAndDuplicateReplay() throws Exception {
         var e = event();
         try (var audit = consumer("billing.audit.v1")) {
-            var response = http.postForEntity("/api/v1/billing-events", e, Map.class);
+            var response = http.exchange("/api/v1/billing-events", HttpMethod.POST, new HttpEntity<>(e, apiHeaders()), Map.class);
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
             persisted(e);
             send(e);
@@ -100,7 +109,7 @@ class PipelineIT {
             assertThat(publisher.publishOne()).isTrue();
             assertThat(publisher.publishOne()).isFalse();
             assertThat(messages(audit, e.eventId().toString(), 1).getFirst()).contains("BILLING_PERSISTED");
-            var read = http.getForEntity("/api/v1/billing-events/" + e.eventId(), Map.class);
+            var read = http.exchange("/api/v1/billing-events/" + e.eventId(), HttpMethod.GET, new HttpEntity<>(apiHeaders()), Map.class);
             assertThat(read.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(read.getBody()).containsEntry("status", "PERSISTED").containsEntry("auditStatus", "PUBLISHED");
         }
