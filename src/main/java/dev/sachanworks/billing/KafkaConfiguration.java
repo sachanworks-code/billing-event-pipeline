@@ -13,6 +13,16 @@ import java.time.Duration;
 @Configuration
 public class KafkaConfiguration {
     @Bean
+    org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory<String, String> failureListenerFactory(
+            org.springframework.kafka.core.ConsumerFactory<String, String> consumerFactory) {
+        var factory = new org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory<String, String>();
+        factory.setConsumerFactory(consumerFactory);
+        factory.getContainerProperties().setAckMode(org.springframework.kafka.listener.ContainerProperties.AckMode.RECORD);
+        // Retry persistence in place; never send a failed DLQ observation back to the DLQ.
+        factory.setCommonErrorHandler(new DefaultErrorHandler(new FixedBackOff(1000, FixedBackOff.UNLIMITED_ATTEMPTS)));
+        return factory;
+    }
+    @Bean
     NewTopics topics(@Value("${billing.topics.input}") String input,
                      @Value("${billing.topics.audit}") String audit,
                      @Value("${billing.topics.dlq}") String dlq) {
@@ -27,6 +37,12 @@ public class KafkaConfiguration {
                                     @Value("${billing.retry.max-retries}") long retries) {
         var recoverer = new DeadLetterPublishingRecoverer(template,
                 (record, exception) -> new TopicPartition(dlq, record.partition()));
+        recoverer.addHeadersFunction((record, exception) -> {
+            Throwable cause = org.springframework.core.NestedExceptionUtils.getMostSpecificCause(exception);
+            String reason = cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage();
+            return new org.apache.kafka.common.header.internals.RecordHeaders().add(
+                    "billing-failure-reason", reason.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        });
         recoverer.setFailIfSendResultIsError(true);
         recoverer.setWaitForSendResultTimeout(Duration.ofSeconds(15));
         var handler = new DefaultErrorHandler(recoverer, new FixedBackOff(delay, retries));
