@@ -50,12 +50,16 @@ class PipelineIT {
     @Autowired TestRestTemplate http;
     @Autowired JdbcTemplate jdbc;
     @Autowired EventCodec codec;
+    @Autowired SubmissionTracker tracker;
+    @Autowired FailedEventListener failures;
     @Autowired OutboxPublisher publisher;
     @Autowired KafkaTemplate<String, String> template;
     @MockitoSpyBean BillingProcessor processor;
     @MockitoSpyBean KafkaAuditSender sender;
 
     @BeforeEach void clean() {
+        jdbc.execute("DELETE FROM failed_event");
+        jdbc.execute("DELETE FROM event_submission");
         jdbc.execute("DELETE FROM audit_outbox");
         jdbc.execute("DELETE FROM billing_event");
     }
@@ -200,4 +204,73 @@ class PipelineIT {
             assertThat(messages(audit, e.eventId().toString(), 2)).hasSize(2).allSatisfy(payload -> assertThat(payload).contains(e.eventId().toString()));
         }
     }
+    Map receipt(BillingEvent event) {
+        var response = http.exchange("/api/v1/billing-events", HttpMethod.POST, new HttpEntity<>(event, apiHeaders()), Map.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        return response.getBody();
+    }
+    Map dashboard(String path) {
+        return http.exchange("/api/v1/dashboard/" + path, HttpMethod.GET, new HttpEntity<>(apiHeaders()), Map.class).getBody();
+    }
+    void receiptStatus(Map receipt, String status) {
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() ->
+                assertThat(dashboard("submissions/" + receipt.get("submissionId"))).containsEntry("status", status));
+    }
+    @Test void dashboardTracksProcessedDuplicateAndConflictingReceipts() {
+        var e = event();
+        var first = receipt(e);
+        receiptStatus(first, "PROCESSED");
+        assertThat(dashboard("submissions/" + first.get("submissionId"))).containsEntry("auditStatus", "PENDING");
+        assertThat(publisher.publishOne()).isTrue();
+        assertThat(dashboard("submissions/" + first.get("submissionId"))).containsEntry("auditStatus", "PUBLISHED");
+        var duplicate = receipt(e);
+        receiptStatus(duplicate, "DUPLICATE");
+        var conflict = receipt(new BillingEvent(e.eventId(), e.invoiceId(), e.customerId(), new BigDecimal("1499.01"), e.currency(), e.billingDate()));
+        receiptStatus(conflict, "FAILED");
+        assertThat(dashboard("submissions/" + conflict.get("submissionId"))).containsEntry("auditStatus", "NOT_APPLICABLE").containsKey("failureReason");
+        assertThat(count("billing_event", e.eventId())).isEqualTo(1);
+        assertThat(dashboard("submissions?status=FAILED&search=INV-DEMO").get("total")).isEqualTo(1);
+        assertThat(dashboard("failures").get("items")).asList().isNotEmpty();
+    }
+    @Test void dashboardRejectsUnauthorizedRequestsAndBadFiltersButServesPublicShell() {
+        assertThat(http.getForEntity("/", String.class).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(http.getForEntity("/api/v1/dashboard/summary", String.class).getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        for (String query : List.of("status=INVALID", "page=-1", "search=" + "a".repeat(65))) {
+            assertThat(http.exchange("/api/v1/dashboard/submissions?" + query, HttpMethod.GET,
+                    new HttpEntity<>(apiHeaders()), Map.class).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        }
+    }
+    @Test void malformedDeadLetterIsAvailableForInvestigation() throws Exception {
+        String marker = "dashboard-malformed-" + UUID.randomUUID();
+        template.send("billing.events.v1", marker, marker).get(10, TimeUnit.SECONDS);
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM failed_event WHERE payload = ?", Integer.class, marker)).isEqualTo(1));
+        String id = jdbc.queryForObject("SELECT failure_id FROM failed_event WHERE payload = ?", String.class, marker);
+        assertThat(dashboard("failures/" + id)).containsEntry("payload", marker).containsEntry("eventId", null);
+    }
+
+    @Test void receiptRedeliveryAndLateAcknowledgementsPreserveCompletedResult() {
+        var e = event(); var id = tracker.begin(e);
+        tracker.process(e, id.toString());
+        tracker.process(e, id.toString());
+        tracker.accepted(id); tracker.uncertain(id);
+        assertThat(dashboard("submissions/" + id)).containsEntry("status", "PROCESSED");
+        assertThat(count("billing_event", e.eventId())).isEqualTo(1);
+    }
+    @Test void receiptTransitionRollsBackTogetherWithBillingTransaction() {
+        var e = event(); var id = tracker.begin(e);
+        adminSql("CREATE TRIGGER reject_receipt BEFORE UPDATE ON event_submission FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='simulated receipt update failure'");
+        try {
+            assertThatThrownBy(() -> tracker.process(e, id.toString())).isInstanceOf(DataAccessException.class);
+            assertThat(count("billing_event", e.eventId())).isZero();
+            assertThat(count("audit_outbox", e.eventId())).isZero();
+            assertThat(dashboard("submissions/" + id)).containsEntry("status", "SUBMITTING");
+        } finally { adminSql("DROP TRIGGER reject_receipt"); }
+    }
+    @Test void observingSameDeadLetterOffsetTwiceCreatesOneFailureRow() {
+        var record = new org.apache.kafka.clients.consumer.ConsumerRecord<String, String>("test-dashboard-dlq", 1, 123L, "bad", "invalid-json");
+        failures.receive(record); failures.receive(record);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM failed_event WHERE source_topic = 'test-dashboard-dlq' AND source_partition = 1 AND source_offset = 123", Integer.class)).isEqualTo(1);
+    }
+
 }

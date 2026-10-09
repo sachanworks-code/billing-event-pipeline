@@ -1,10 +1,24 @@
-# Billing Event Pipeline
+# Ledger — Live Billing Dashboard
 
 **Java 21 · Spring Boot · Kafka · MySQL · Transactional Outbox**
 
-A runnable backend portfolio project that accepts synthetic billing events, persists each event once, and publishes an audit event without a database/Kafka dual-write gap.
+A live billing dashboard backed by a real Java, Kafka, and MySQL pipeline. Submit synthetic bills, follow processing and audit status, and investigate failed events. The dashboard refreshes every three seconds and runs from the same Spring Boot application.
 
 Built by [Vikash Sachan](https://github.com/sachanworks-code). This is an independent demonstration; it contains no employer code or customer data.
+
+## Dashboard
+
+Open **http://localhost:8080/** after starting the stack. Click **Connect workspace** and enter `billing-local-dev-key` for the local demo, or your configured `BILLING_API_KEY`.
+
+- Overview: submission totals, unique stored bills, pending audits, failures, and activity over the last hour.
+- Submissions: invoice/customer/event search, status filters, pagination, and receipt timelines.
+- New submission: validated billing form, plus three real sample events with one click.
+- Receipt details: identical duplicate and conflicting amount demonstrations.
+- Failed events: original payload, diagnostic reason, and dead-letter partition/offset.
+
+The UI shell is public; billing data and writes require an API key. Keys remain in browser memory only and disappear on reload/disconnect. There are no fabricated metrics or simulated processing results. API-submitted events have receipts; records sent directly to Kafka can contribute bills/failures without a receipt.
+
+![Dashboard preview](docs/dashboard-preview.jpg)
 
 ## What this demonstrates
 
@@ -45,14 +59,15 @@ Wait for health to return `UP`. Kafka and MySQL have startup health checks; the 
 
 ```bash
 curl -i -X POST http://localhost:8080/api/v1/billing-events \
+  -H 'X-API-Key: billing-local-dev-key' \
   -H 'Content-Type: application/json' \
   --data-binary @examples/billing-event.json
 ```
 
-Response: `202 Accepted`, a `Location` header, and `{"eventId":"54ea3148-3f35-43e8-a003-668e934cac01","status":"ACCEPTED"}`.
+Response: `202 Accepted`, a `Location` header, and a JSON body containing `eventId`, a distinct `submissionId`, and `status: ACCEPTED`.
 
 ```bash
-curl http://localhost:8080/api/v1/billing-events/54ea3148-3f35-43e8-a003-668e934cac01
+curl -H 'X-API-Key: billing-local-dev-key' http://localhost:8080/api/v1/billing-events/54ea3148-3f35-43e8-a003-668e934cac01
 ```
 
 The lookup returns `404` until processing commits. Afterwards it returns `PERSISTED`, the event, and an `auditStatus` of `PENDING` or `PUBLISHED`.
@@ -131,7 +146,7 @@ It measures HTTP acceptance latency and waits for persistence plus audit publica
 
 ## Scope
 
-Local demo credentials and plaintext Kafka are confined to loopback ports. Before hosting externally, add authentication, TLS, managed secrets, broker replication, business validation, retention policies, outbox lag alerts, and load testing appropriate to the target environment. No production throughput or availability is claimed.
+Local demo credentials and plaintext Kafka are confined to loopback ports. API-key authentication is included. Before hosting externally, replace all local credentials, configure HTTPS, persist Kafka storage, keep database/broker ports private, and add retention, backups, rate limits, and monitoring appropriate to the host. See [dashboard operations](docs/dashboard.md). No production throughput or availability is claimed.
 
 ## Technology versions
 

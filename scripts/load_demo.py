@@ -5,6 +5,7 @@ import concurrent.futures
 import datetime
 import json
 import math
+import os
 import time
 import urllib.error
 import urllib.request
@@ -13,7 +14,7 @@ import uuid
 
 def request(url, payload=None):
     data = None if payload is None else json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", "X-API-Key": os.environ.get("BILLING_API_KEY", "billing-local-dev-key")})
     with urllib.request.urlopen(req, timeout=25) as response:
         return response.status, json.load(response)
 

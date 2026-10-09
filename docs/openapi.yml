@@ -5,6 +5,8 @@ info:
   description: Synthetic billing event ingestion with asynchronous persistence and audit delivery.
 servers:
   - url: http://localhost:8080
+security:
+  - apiKey: []
 paths:
   /api/v1/billing-events:
     post:
@@ -26,9 +28,10 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [eventId, status]
+                required: [eventId, submissionId, status]
                 properties:
                   eventId: {type: string, format: uuid}
+                  submissionId: {type: string, format: uuid}
                   status: {type: string, enum: [ACCEPTED]}
         '400': {description: Invalid JSON or event contract}
         '503': {description: Broker acknowledgement unavailable; delivery may be ambiguous}
@@ -55,7 +58,70 @@ paths:
                   auditStatus: {type: string, enum: [PENDING, PUBLISHED]}
         '400': {description: Invalid UUID}
         '404': {description: Event not persisted; may still be processing or may have failed}
+  /api/v1/dashboard/summary:
+    get:
+      summary: Live metrics and submission activity
+      responses:
+        '200': {description: Dashboard data; response fields documented in docs/dashboard.md}
+        '400': {description: Invalid filter or identifier}
+        '401': {description: Missing or invalid API key}
+  /api/v1/dashboard/submissions:
+    get:
+      summary: Paginated submission receipts
+      parameters:
+        - in: query
+          name: page
+          schema: {type: integer, minimum: 0, maximum: 100000, default: 0}
+        - in: query
+          name: search
+          schema: {type: string, maxLength: 64}
+        - in: query
+          name: status
+          schema: {type: string, enum: [ALL, SUBMITTING, ACCEPTED, PROCESSED, DUPLICATE, FAILED, UNKNOWN], default: ALL}
+      responses:
+        '200': {description: Dashboard data; response fields documented in docs/dashboard.md}
+        '400': {description: Invalid filter or identifier}
+        '401': {description: Missing or invalid API key}
+  /api/v1/dashboard/submissions/{id}:
+    get:
+      summary: Submission timeline and original event
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': {description: Dashboard data; response fields documented in docs/dashboard.md}
+        '400': {description: Invalid filter or identifier}
+        '401': {description: Missing or invalid API key}
+        '404': {description: Record not found}
+  /api/v1/dashboard/failures:
+    get:
+      summary: Paginated dead-letter observations
+      parameters:
+        - in: query
+          name: page
+          schema: {type: integer, minimum: 0, maximum: 100000, default: 0}
+      responses:
+        '200': {description: Dashboard data; response fields documented in docs/dashboard.md}
+        '400': {description: Invalid filter or identifier}
+        '401': {description: Missing or invalid API key}
+  /api/v1/dashboard/failures/{id}:
+    get:
+      summary: Failure reason and raw payload
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200': {description: Dashboard data; response fields documented in docs/dashboard.md}
+        '400': {description: Invalid filter or identifier}
+        '401': {description: Missing or invalid API key}
+        '404': {description: Record not found}
 components:
+  securitySchemes:
+    apiKey: {type: apiKey, in: header, name: X-API-Key}
   schemas:
     BillingEvent:
       type: object

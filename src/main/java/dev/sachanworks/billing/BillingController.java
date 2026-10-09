@@ -18,21 +18,29 @@ public class BillingController {
     private final EventCodec codec;
     private final JdbcTemplate jdbc;
     private final String input;
+    private final SubmissionTracker tracker;
     public BillingController(KafkaTemplate<String, String> kafka, EventCodec codec, JdbcTemplate jdbc,
-                             @Value("${billing.topics.input}") String input) {
-        this.kafka = kafka; this.codec = codec; this.jdbc = jdbc; this.input = input;
+                             @Value("${billing.topics.input}") String input, SubmissionTracker tracker) {
+        this.kafka = kafka; this.codec = codec; this.jdbc = jdbc; this.input = input; this.tracker = tracker;
     }
     @PostMapping
     public ResponseEntity<Map<String, Object>> submit(@Valid @RequestBody BillingEvent event) {
-        try { kafka.send(input, event.eventId().toString(), codec.encode(event.normalized())).get(15, TimeUnit.SECONDS); }
+        UUID submissionId = tracker.begin(event);
+        var record = new org.apache.kafka.clients.producer.ProducerRecord<String, String>(input, event.eventId().toString(), codec.encode(event.normalized()));
+        record.headers().add(SubmissionTracker.HEADER, submissionId.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        try { kafka.send(record).get(15, TimeUnit.SECONDS); }
+
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            tracker.uncertain(submissionId);
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Submission interrupted; retry with the same eventId", e);
         } catch (Exception e) {
+            tracker.uncertain(submissionId);
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Broker acknowledgement unavailable; retry with the same eventId", e);
         }
+        tracker.accepted(submissionId);
         return ResponseEntity.accepted().location(URI.create("/api/v1/billing-events/" + event.eventId()))
-                .body(Map.of("eventId", event.eventId(), "status", "ACCEPTED"));
+                .body(Map.of("eventId", event.eventId(), "submissionId", submissionId, "status", "ACCEPTED"));
     }
     @GetMapping("/{eventId}")
     public Map<String, Object> find(@PathVariable UUID eventId) {

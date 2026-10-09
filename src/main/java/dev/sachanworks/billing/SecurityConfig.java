@@ -31,8 +31,9 @@ public class SecurityConfig {
             .csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/actuator/health").permitAll()
+                .requestMatchers("/actuator/health", "/", "/index.html", "/assets/**", "/favicon.svg").permitAll()
                 .requestMatchers("/error").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/v1/dashboard/**").hasAuthority("ROLE_BILLING")
                 .requestMatchers(HttpMethod.GET, "/api/v1/billing-events/**").hasAuthority("ROLE_BILLING")
                 .requestMatchers(HttpMethod.POST, "/api/v1/billing-events").hasAuthority("ROLE_BILLING")
                 .anyRequest().denyAll())
@@ -58,7 +59,8 @@ public class SecurityConfig {
         @Override
         protected boolean shouldNotFilter(HttpServletRequest request) {
             String path = request.getRequestURI();
-            return "/actuator/health".equals(path) || "/error".equals(path);
+            return "/actuator/health".equals(path) || "/error".equals(path) || "/".equals(path)
+                    || "/index.html".equals(path) || "/favicon.svg".equals(path) || path.startsWith("/assets/");
         }
 
         @Override

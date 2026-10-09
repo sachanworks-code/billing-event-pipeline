@@ -22,9 +22,11 @@ class BillingControllerTest {
     @Autowired MockMvc mvc;
     @MockitoBean KafkaTemplate<String, String> kafka;
     @MockitoBean JdbcTemplate jdbc;
+    @MockitoBean SubmissionTracker tracker;
+    @org.junit.jupiter.api.BeforeEach void receipt() { when(tracker.begin(any())).thenReturn(java.util.UUID.randomUUID()); }
     private String input() throws Exception { return Files.readString(Path.of("examples/billing-event.json")); }
     @Test void acceptsOnlyAfterBrokerAcknowledges() throws Exception {
-        when(kafka.send(anyString(), anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(null));
+        when(kafka.send(any(org.apache.kafka.clients.producer.ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(null));
         mvc.perform(post("/api/v1/billing-events").header("X-API-Key", "test-api-key").contentType("application/json").content(input()))
                 .andExpect(status().isAccepted()).andExpect(jsonPath("$.status").value("ACCEPTED"))
                 .andExpect(header().string("Location", "/api/v1/billing-events/54ea3148-3f35-43e8-a003-668e934cac01"));
@@ -32,15 +34,15 @@ class BillingControllerTest {
     @Test void invalidAmountDoesNotReachKafka() throws Exception {
         mvc.perform(post("/api/v1/billing-events").header("X-API-Key", "test-api-key").contentType("application/json").content(input().replace("1499.00", "-1")))
                 .andExpect(status().isBadRequest());
-        verify(kafka, never()).send(anyString(), anyString(), anyString());
+        verify(kafka, never()).send(any(org.apache.kafka.clients.producer.ProducerRecord.class));
     }
     @Test void invalidIdDoesNotReachKafka() throws Exception {
         mvc.perform(post("/api/v1/billing-events").header("X-API-Key", "test-api-key").contentType("application/json").content(input().replace("54ea3148-3f35-43e8-a003-668e934cac01", "bad-id")))
                 .andExpect(status().isBadRequest());
-        verify(kafka, never()).send(anyString(), anyString(), anyString());
+        verify(kafka, never()).send(any(org.apache.kafka.clients.producer.ProducerRecord.class));
     }
     @Test void brokerFailureReturnsUnavailable() throws Exception {
-        when(kafka.send(anyString(), anyString(), anyString())).thenReturn(CompletableFuture.failedFuture(new IllegalStateException("broker offline")));
+        when(kafka.send(any(org.apache.kafka.clients.producer.ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(new IllegalStateException("broker offline")));
         mvc.perform(post("/api/v1/billing-events").header("X-API-Key", "test-api-key").contentType("application/json").content(input())).andExpect(status().isServiceUnavailable());
     }
     @Test void invalidLookupIdReturnsBadRequest() throws Exception {
